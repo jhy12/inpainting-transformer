@@ -1,5 +1,6 @@
 # inpainting-transformer
 This is unofficial implementation of Inpainting Transformer for Anomaly Detection
+
 We support train and test(slow version) for InTra models now. Updates would be coming soon.
 
 ## Acknowledgement
@@ -26,8 +27,13 @@ python main.py --image_dir=../mvtec_anomaly_detection/bottle/ --ckpt=./ckpt/InTr
 
 ## TODO(coming soon!)
 Code refactoring
+
 Add augmentation
+
 speed up inference
+
 Add pretrained models
+
 update prerequisites
+
 update documents
