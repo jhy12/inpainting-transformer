@@ -1,5 +1,5 @@
 # inpainting-transformer
-This is unofficial implementation of Inpainting Transformer for Anomaly Detection
+This is unofficial pytorch implementation of Inpainting Transformer for Anomaly Detection
 
 We support train and test(slow version) for InTra models now. Updates would be coming soon.
 
