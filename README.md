@@ -28,8 +28,6 @@ python main.py --image_dir=../mvtec_anomaly_detection/bottle/ --ckpt=./ckpt/InTr
 ## TODO(coming soon!)
 Code refactoring
 
-Add augmentation
-
 speed up inference
 
 Add pretrained models
