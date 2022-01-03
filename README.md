@@ -12,6 +12,7 @@ https://github.com/taikiinoue45/RIAD
   - torch
   - opencv
   - PIL
+  - albumentations
 
 ## Usage
 
