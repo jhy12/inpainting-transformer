@@ -1,4 +1,4 @@
-import os
+import os, time
 import cv2
 import numpy as np
 
@@ -16,6 +16,7 @@ import argparse
 from ast import literal_eval
 
 from model import InTra
+from utils import get_basename
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -70,18 +71,18 @@ if __name__ =='__main__':
     args = parse_args()
     args.image_size = literal_eval(args.image_size)
     args.results = os.path.join(args.ckpt, 'results')
-    #args.prefix = os.path.basename(os.path.dirname(args.test_dir))
-    #print(args.prefix)
 
-    train_loader, valid_loader = MVTecAD_loader(args.image_dir, args.image_size, args.train_ratio, args.batch_size, num_workers=4, is_inference=False)
+    train_loader, valid_loader = MVTecAD_loader(args.image_dir, args.image_size, args.train_ratio, args.batch_size, num_workers=8, is_inference=False)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(device)
+    args.n_gpus = torch.cuda.device_count()
+    print("Device count: ", torch.cuda.device_count())
 
     seed = 42
     if not os.path.exists(args.ckpt):
-        os.mkdir(args.ckpt)
+        os.makedirs(args.ckpt, exist_ok=True)
     if not os.path.exists(args.results):
-        os.mkdir(args.results)
+        os.makedirs(args.results, exist_ok=True)
 
     torch.manual_seed(seed)
     if torch.cuda.is_available():
@@ -91,7 +92,9 @@ if __name__ =='__main__':
 
     is_train = not args.is_infer
     optimizer = optim.Adam(model.parameters(), lr=0.0001, weight_decay=0.00001)
-    
+    #scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2, eta_min=0.0001, last_epoch=-1)
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=int(2*args.num_epochs/3), gamma=0.1)
+
     best_loss = 1e+15
     valid_loss = 1e+15
     if is_train:
@@ -107,14 +110,27 @@ if __name__ =='__main__':
                 best_loss = valid_loss
                 torch.save(model.state_dict(), os.path.join(args.ckpt, 'model_best.nn'))
             torch.save(model.state_dict(), os.path.join(args.ckpt, 'model_last.nn'))
+            scheduler.step()
             print('epoch [{}/{}], train loss: {:.6f}, valid_loss: {:.6f}, best_loss: {:.6f}'.format(epoch + 1, num_epochs, train_loss, valid_loss, best_loss))
     else:
         model_state_dict = torch.load(os.path.join(args.ckpt, 'model_last.nn'), map_location='cuda')
         model.load_state_dict(model_state_dict)
 
-        test_loader = MVTecAD_loader(args.image_dir, args.image_size, args.train_ratio, 1, num_workers=0, is_inference=True)
+        test_loader, train_loader = MVTecAD_loader(args.image_dir, args.image_size, args.train_ratio, 1, num_workers=0, is_inference=True)
         model.eval()
         test_loss = 0
+
+        '''
+        with torch.no_grad():
+            msgms_map_list = []
+            for data, label in train_loader:
+                data = data.to(device)
+                _, _, _, msgms_map =  model._process_one_image(data)
+                msgms_map_list.append(msgms_map)
+            
+            msgms_map_stacked = torch.vstack(msgms_map_list)
+            msgms_map_stacked = torch.mean(msgms_map_stacked, dim=0, keepdim=True)
+        '''
 
         with torch.no_grad():
             for data, label in test_loader:
@@ -122,15 +138,18 @@ if __name__ =='__main__':
                 loss, image_recon, image_reassembled, msgms_map =  model._process_one_image(data)
                 test_loss += loss.item()
 
-                data_arr = tensor2nparr(data)
-                image_recon_arr = tensor2nparr(image_recon)
-                image_reassembled_arr = tensor2nparr(image_reassembled)
-                msgms_map_arr = tensor2nparr(msgms_map)
+                image_raw_arr = tensor2nparr(data)
+                image_rec_arr = tensor2nparr(image_recon)
+                image_pred_arr = tensor2nparr(msgms_map)
+                image_pred_arr_th = image_pred_arr.copy()
+                image_pred_arr_th[image_pred_arr_th < 128] = 0
 
-                cv2.imshow('image', data_arr[0])
-                cv2.imshow('image_recon_arr', image_recon_arr[0])
-                cv2.imshow('msgms_map_arr', msgms_map_arr[0])
-                cv2.imshow('heatmap', cv2.applyColorMap(msgms_map_arr[0], cv2.COLORMAP_JET))
-                cv2.waitKey(0)
+                img_basename = [get_basename(x) for x in label[2]]
+                cv2.imwrite(os.path.join(args.results, img_basename[0]+'_image.jpg'), image_raw_arr[0])
+                cv2.imwrite(os.path.join(args.results, img_basename[0]+'_recon.jpg'), image_rec_arr[0])
+                cv2.imwrite(os.path.join(args.results, img_basename[0]+'_pred_raw.jpg'), image_pred_arr[0])
+                cv2.imwrite(os.path.join(args.results, img_basename[0]+'_pred.jpg'), cv2.applyColorMap(image_pred_arr[0], cv2.COLORMAP_JET))
+                cv2.imwrite(os.path.join(args.results, img_basename[0]+'_pred_th.jpg'), cv2.applyColorMap(image_pred_arr_th[0], cv2.COLORMAP_JET))
         
         test_loss /= len(test_loader.dataset)
+

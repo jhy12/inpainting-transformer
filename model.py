@@ -239,11 +239,56 @@ class InTra(nn.Module):
         return total_loss, msgms_map, ssim_map
 
    
-    def _process_one_image(self, image, K=16, L=7):
+    def _process_one_image(self, image, K=16, L=7, infer_batch_size=1):
         image_recon, gt, loss = self._process_infer_image(image, K, L)
+        '''
+        if infer_batch_size > 1:
+            image_recon, gt, loss = self._process_infer_image(image, K, L)
+        else:
+            image_recon, gt, loss = self._process_infer_image_batch(image, infer_batch_size, K, L)
+        '''
         _, msgms_map, _ = self._compute_loss(image_recon, gt)
-
         return loss, image_recon, gt, msgms_map 
+    
+    def _process_infer_image_batch(self, image, infer_batch_size=64, K=16, L=7):
+        patches_recon = []
+        patches_gt = []
+        patches_loss = []
+        # get img size
+        B, C, H, W = image.size()
+        assert B == 1
+        # confusing notations.. we use M x N not N x M for original papers.
+        M = int(H / K)
+        N = int(W / K)
+
+        subgrid_input_batch = []
+        for t in range(M):
+            for u in range(N):
+                r = g(t, L) - max(0, g(t, L) + L - M - 1)
+                s = g(u, L) - max(0, g(u, L) + L - N - 1)
+                subgrid_input, subgrid_inpaint = self._process_subgrid(image, self.x_inpaint, self.pos_embedding_glb, self.lin_proj, M, N, r, s, t, u, K, L)
+
+                if len(subgrid_input_batch) == infer_batch_size or ((t == M-1) and (u == N-1)):
+                    # subgrid_input_batch : [infer_batch_size, L*L, d_model]
+                    subgrid_input_batch = torch.vstack(subgrid_input_batch)
+                    patch_recon_batch = self.forward(subgrid_input_batch)
+
+
+                if len(subgrid_input_batch) < infer_batch_size:
+                    subgrid_input_batch.append(subgrid_input)
+
+                patch_recon = self.forward(subgrid_input)
+                patches_recon.append(patch_recon)
+                patches_gt.append(subgrid_inpaint)
+
+                p_recon_r = patch_recon.reshape(patch_recon.size(0), self.C, self.K, self.K)
+                p_gt_r = subgrid_inpaint.reshape(subgrid_inpaint.size(0), self.C, self.K, self.K)
+                patches_loss.append(self._compute_loss(p_recon_r, p_gt_r)[0])
+
+        image_recon = self._combine_recon_patches(patches_recon, M, N, K)
+        gt = self._combine_recon_patches(patches_gt, M, N, K)
+        loss = torch.mean(torch.tensor(patches_loss)) / B
+        return image_recon, gt, loss
 
     def _process_infer_image(self, image, K=16, L=7):
         patches_recon = []
